@@ -1,23 +1,29 @@
 import javax.swing.*;
-import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableRowSorter;
+import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
 import java.sql.*;
 import java.util.ArrayList;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class Admin {
 
-    // ================= DATABASE ARRAYS =================
+    // ================= DATA LISTS =================
     static ArrayList<Item> inventory = new ArrayList<>();
     static ArrayList<User> users = new ArrayList<>();
     static ArrayList<String> auditLogs = new ArrayList<>();
+    static ArrayList<Supplier> suppliers = new ArrayList<>();
+    static ArrayList<StockHistory> stockHistories = new ArrayList<>();
 
     // ================= TABLE MODELS =================
     static DefaultTableModel inventoryModel;
     static DefaultTableModel userModel;
-    static DefaultTableModel stockHistoryModel;   // NEW: Stock-in/out history
+    static DefaultTableModel stockHistoryModel;
+    static DefaultTableModel supplierModel;
+    static DefaultTableModel categoryModel;
+    static DefaultTableModel reportModel;
 
     static JTextArea logArea;
 
@@ -26,45 +32,65 @@ public class Admin {
     static JLabel totalValueLabel;
     static JLabel lowStockLabel;
     static JLabel totalUsersLabel;
+    static JLabel totalSuppliersLabel;
+    static JLabel totalCategoriesLabel;
 
-    // ================= SORTER (for column sorting) =================
-    static TableRowSorter<DefaultTableModel> inventorySorter; // NEW
+    // ================= SORTER =================
+    static TableRowSorter<DefaultTableModel> inventorySorter;
+
+    // ================= COLOR SCHEME =================
+    static final Color PRIMARY      = new Color(37, 99, 235);    // Blue-600
+    static final Color PRIMARY_DARK = new Color(29, 78, 216);    // Blue-700
+    static final Color SUCCESS      = new Color(5, 150, 105);    // Emerald-600
+    static final Color DANGER       = new Color(220, 38, 38);    // Red-600
+    static final Color WARNING      = new Color(217, 119, 6);    // Amber-600
+    static final Color SURFACE      = new Color(248, 250, 252);  // Slate-50
+    static final Color CARD_BG      = Color.WHITE;
+    static final Color BORDER       = new Color(226, 232, 240);  // Slate-200
+    static final Color TEXT_PRIMARY = new Color(15, 23, 42);     // Slate-900
+    static final Color TEXT_MUTED   = new Color(100, 116, 139);  // Slate-500
+    static final Color HEADER_BG    = new Color(30, 41, 59);     // Slate-800
+    static final Color TAB_SEL      = new Color(37, 99, 235);
+    static final Color TEAL         = new Color(13, 148, 136);   // Teal-600
+    static final Color VIOLET       = new Color(124, 58, 237);   // Violet-600
 
     // ==================================================
-    // ITEM CLASS
+    // INNER CLASSES
     // ==================================================
     static class Item {
-        int id;
-        String name;
-        String category;
-        int quantity;
-        double price;
-
-        Item(int id, String name, String category, int quantity, double price) {
-            this.id = id;
-            this.name = name;
-            this.category = category;
-            this.quantity = quantity;
-            this.price = price;
+        int id; String name, category, supplier;
+        int quantity; double price;
+        Item(int id, String name, String category, int quantity, double price, String supplier) {
+            this.id = id; this.name = name; this.category = category;
+            this.quantity = quantity; this.price = price;
+            this.supplier = (supplier == null) ? "" : supplier;
         }
     }
 
-    // ==================================================
-    // USER CLASS
-    // ==================================================
     static class User {
-        int id;
-        String username;
-        String password;
-        String role;
-        boolean active;
-
+        int id; String username, password, role; boolean active;
         User(int id, String username, String password, String role, boolean active) {
-            this.id = id;
-            this.username = username;
-            this.password = password;
-            this.role = role;
-            this.active = active;
+            this.id = id; this.username = username; this.password = password;
+            this.role = role; this.active = active;
+        }
+    }
+
+    static class Supplier {
+        int id; String name, contact, email, address;
+        Supplier(int id, String name, String contact, String email, String address) {
+            this.id = id; this.name = name; this.contact = contact;
+            this.email = email; this.address = address;
+        }
+    }
+
+    static class StockHistory {
+        int id, productId, quantity;
+        String productName, type, remarks, timestamp;
+        StockHistory(int id, int productId, String productName, String type,
+                     int quantity, String remarks, String timestamp) {
+            this.id = id; this.productId = productId; this.productName = productName;
+            this.type = type; this.quantity = quantity;
+            this.remarks = remarks; this.timestamp = timestamp;
         }
     }
 
@@ -72,891 +98,1224 @@ public class Admin {
     // OPEN DASHBOARD
     // ==================================================
     public static void openAdminDashboard() {
+        // Apply modern look & feel tweaks globally
+        UIManager.put("TabbedPane.selected", CARD_BG);
+        UIManager.put("TabbedPane.background", SURFACE);
+        UIManager.put("TabbedPane.foreground", TEXT_PRIMARY);
+        UIManager.put("TabbedPane.contentBorderInsets", new Insets(0, 0, 0, 0));
+        UIManager.put("Table.alternateRowColor", new Color(248, 250, 252));
+        UIManager.put("Table.gridColor", BORDER);
+        UIManager.put("Table.focusCellHighlightBorder", BorderFactory.createLineBorder(PRIMARY, 1));
 
-        JFrame frame = new JFrame("Admin Dashboard");
-        frame.setSize(1150, 680);
+        JFrame frame = new JFrame("Inventory Management System — Admin");
+        frame.setSize(1280, 800);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setLocationRelativeTo(null);
+        frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
         frame.setLayout(new BorderLayout());
+        frame.getContentPane().setBackground(SURFACE);
 
         // ==================================================
-        // SIDEBAR
+        // TOP HEADER BAR
         // ==================================================
-        JPanel sidebar = new JPanel();
-        sidebar.setBackground(new Color(33, 37, 41));
-        sidebar.setPreferredSize(new Dimension(200, 0));
-        sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
+        JPanel headerBar = new JPanel(new BorderLayout());
+        headerBar.setBackground(HEADER_BG);
+        headerBar.setPreferredSize(new Dimension(0, 56));
+        headerBar.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 20));
 
-        JLabel title = new JLabel(" ADMIN PANEL");
-        title.setForeground(Color.WHITE);
-        title.setFont(new Font("Arial", Font.BOLD, 20));
-        title.setBorder(BorderFactory.createEmptyBorder(20, 15, 20, 10));
+        JLabel appTitle = new JLabel("IMS  ·  Admin Panel");
+        appTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        appTitle.setForeground(Color.WHITE);
 
-        sidebar.add(title);
+        JPanel headerRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 12));
+        headerRight.setOpaque(false);
 
-        JButton dashBtn   = makeSidebarButton("Dashboard");
-        JButton invBtn    = makeSidebarButton("Inventory");
-        JButton userBtn   = makeSidebarButton("Users");
-        JButton logBtn    = makeSidebarButton("Audit Logs");
-        JButton logoutBtn = makeSidebarButton("Logout");
+        JLabel clockLabel = new JLabel();
+        clockLabel.setForeground(new Color(148, 163, 184)); // Slate-400
+        clockLabel.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        updateClock(clockLabel);
+        Timer clockTimer = new Timer(1000, e -> updateClock(clockLabel));
+        clockTimer.start();
 
-        sidebar.add(dashBtn);
-        sidebar.add(invBtn);
-        sidebar.add(userBtn);
-        sidebar.add(logBtn);
-        sidebar.add(Box.createVerticalGlue());
-        sidebar.add(logoutBtn);
+        JButton logoutBtn = makePillButton("Logout", DANGER, Color.WHITE);
+        logoutBtn.addActionListener(e -> {
+            frame.dispose();
+            new Login();
+        });
 
-        frame.add(sidebar, BorderLayout.WEST);
+        headerRight.add(clockLabel);
+        headerRight.add(logoutBtn);
 
-        // ==================================================
-        // TABS
-        // ==================================================
-        JTabbedPane tabs = new JTabbedPane();
-
-        // ==================================================
-        // DASHBOARD TAB
-        // ==================================================
-        JPanel dashPanel = new JPanel(new GridLayout(2, 2, 15, 15));
-        dashPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
-
-        totalItemsLabel = makeStatLabel();
-        totalValueLabel = makeStatLabel();
-        lowStockLabel   = makeStatLabel();
-        totalUsersLabel = makeStatLabel();
-
-        dashPanel.add(makeCard("Total Quantity",   totalItemsLabel, new Color(52, 152, 219)));
-        dashPanel.add(makeCard("Inventory Value",  totalValueLabel, new Color(39, 174, 96)));
-        dashPanel.add(makeCard("Low Stock Items",  lowStockLabel,   new Color(231, 76, 60)));
-        dashPanel.add(makeCard("Total Users",      totalUsersLabel, new Color(142, 68, 173)));
-
-        tabs.addTab("Dashboard", dashPanel);
+        headerBar.add(appTitle, BorderLayout.WEST);
+        headerBar.add(headerRight, BorderLayout.EAST);
+        frame.add(headerBar, BorderLayout.NORTH);
 
         // ==================================================
-        // INVENTORY TAB
+        // TABS (replaces sidebar — cleaner, no redundancy)
         // ==================================================
-        JPanel inventoryPanel = new JPanel(new BorderLayout());
+        JTabbedPane tabs = new JTabbedPane(JTabbedPane.TOP);
+        tabs.setBackground(SURFACE);
+        tabs.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        tabs.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
 
-        // --- Top toolbar ---
-        JPanel topInv = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        // ---- 1. Dashboard ----
+        JPanel dashPanel = buildDashboardPanel();
+        tabs.addTab("  Dashboard  ", dashPanel);
 
-        JButton addBtn    = makeActionButton("Add",         new Color(39, 174, 96));
-        JButton editBtn   = makeActionButton("Edit",        new Color(52, 152, 219));
-        JButton deleteBtn = makeActionButton("Delete",      new Color(231, 76, 60));
-        JButton bulkDelBtn = makeActionButton("Bulk Delete",new Color(192, 57, 43));  // NEW
-        JButton stockInBtn  = makeActionButton("Stock In",  new Color(22, 160, 133)); // NEW
-        JButton stockOutBtn = makeActionButton("Stock Out", new Color(230, 126, 34)); // NEW
+        // ---- 2. Inventory ----
+        JPanel inventoryPanel = createInventoryPanel(frame, tabs);
+        tabs.addTab("  Inventory  ", inventoryPanel);
 
-        // NEW: Category filter dropdown
+        // ---- 3. Categories ----
+        JPanel categoryPanel = createCategoryPanel(frame);
+        tabs.addTab("  Categories  ", categoryPanel);
+
+        // ---- 4. Stock In/Out ----
+        JPanel stockPanel = createStockPanel(frame);
+        tabs.addTab("  Stock In/Out  ", stockPanel);
+
+        // ---- 5. Users ----
+        JPanel userPanel = createUserPanel(frame);
+        tabs.addTab("  Users  ", userPanel);
+
+        // ---- 6. Suppliers ----
+        JPanel supplierPanel = createSupplierPanel(frame);
+        tabs.addTab("  Suppliers  ", supplierPanel);
+
+        // ---- 7. Reports ----
+        JPanel reportPanel = createReportPanel();
+        tabs.addTab("  Reports  ", reportPanel);
+
+        // ---- 8. Stock History ----
+        JPanel stockHistoryPanel = createStockHistoryPanel();
+        tabs.addTab("  Stock History  ", stockHistoryPanel);
+
+        // ---- 9. Audit Logs ----
+        JPanel logPanel = createAuditLogPanel();
+        tabs.addTab("  Audit Logs  ", logPanel);
+
+        // ---- 10. Settings ----
+        JScrollPane settingsPanel = createSettingsPanel(frame);
+        tabs.addTab("  Settings  ", settingsPanel);
+
+        frame.add(tabs, BorderLayout.CENTER);
+
+        // ==================================================
+        // LOAD DATA
+        // ==================================================
+        loadProductsFromDatabase();
+        loadUsersFromDatabase();
+        loadSuppliersFromDatabase();
+        loadStockHistoriesFromDatabase();
+        refreshInventoryTable();
+        refreshUserTable();
+        refreshSupplierTable();
+        refreshStockHistoryTable();
+        refreshDashboard();
+        addLog("Admin dashboard opened.");
+        checkLowStockAlert(frame);
+
+        frame.setVisible(true);
+    }
+
+    // ==================================================
+    // DASHBOARD PANEL
+    // ==================================================
+    static JPanel buildDashboardPanel() {
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setBackground(SURFACE);
+        wrapper.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+        JLabel heading = new JLabel("Overview");
+        heading.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        heading.setForeground(TEXT_PRIMARY);
+        heading.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
+        wrapper.add(heading, BorderLayout.NORTH);
+
+        JPanel cardsGrid = new JPanel(new GridLayout(2, 3, 16, 16));
+        cardsGrid.setOpaque(false);
+
+        totalItemsLabel    = makeDashValue();
+        totalValueLabel    = makeDashValue();
+        lowStockLabel      = makeDashValue();
+        totalUsersLabel    = makeDashValue();
+        totalSuppliersLabel= makeDashValue();
+        totalCategoriesLabel=makeDashValue();
+
+        cardsGrid.add(makeDashCard("Total Stock Units",   totalItemsLabel,     PRIMARY,  "units"));
+        cardsGrid.add(makeDashCard("Total Inventory Value",totalValueLabel,    SUCCESS,  "value"));
+        cardsGrid.add(makeDashCard("Low Stock Items",      lowStockLabel,      DANGER,   "alert"));
+        cardsGrid.add(makeDashCard("Registered Users",     totalUsersLabel,    VIOLET,   "users"));
+        cardsGrid.add(makeDashCard("Suppliers",            totalSuppliersLabel,WARNING,  "suppliers"));
+        cardsGrid.add(makeDashCard("Categories",           totalCategoriesLabel,TEAL,    "categories"));
+
+        wrapper.add(cardsGrid, BorderLayout.CENTER);
+        return wrapper;
+    }
+
+    // ==================================================
+    // INVENTORY PANEL
+    // ==================================================
+    static JPanel createInventoryPanel(JFrame frame, JTabbedPane tabs) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        // Toolbar
+        JPanel toolbar = makeToolbar();
+        JButton addBtn      = makeIconBtn("+ Add Item",   SUCCESS);
+        JButton editBtn     = makeIconBtn("Edit",         PRIMARY);
+        JButton deleteBtn   = makeIconBtn("Delete",       DANGER);
+        JButton bulkDelBtn  = makeIconBtn("Bulk Delete",  DANGER);
+
         JComboBox<String> categoryFilter = new JComboBox<>();
         categoryFilter.addItem("All Categories");
+        categoryFilter.setFont(new Font("Segoe UI", Font.PLAIN, 12));
 
-        JTextField searchField = new JTextField(12);
-        JButton searchBtn = makeActionButton("Search", new Color(142, 68, 173));
-        JButton clearSearchBtn = makeActionButton("Clear", new Color(127, 140, 141)); // NEW
+        JTextField searchField = new JTextField(18);
+        searchField.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        searchField.putClientProperty("JTextField.placeholderText", "Search by name or category...");
+        JButton searchBtn    = makeIconBtn("Search", PRIMARY);
+        JButton clearBtn     = makeIconBtn("Clear",  TEXT_MUTED);
+        styleSecondaryBtn(clearBtn);
 
-        topInv.add(addBtn);
-        topInv.add(editBtn);
-        topInv.add(deleteBtn);
-        topInv.add(bulkDelBtn);
-        topInv.add(new JSeparator(SwingConstants.VERTICAL));
-        topInv.add(stockInBtn);
-        topInv.add(stockOutBtn);
-        topInv.add(new JSeparator(SwingConstants.VERTICAL));
-        topInv.add(new JLabel("Category:"));
-        topInv.add(categoryFilter);
-        topInv.add(new JLabel("Search:"));
-        topInv.add(searchField);
-        topInv.add(searchBtn);
-        topInv.add(clearSearchBtn);
+        toolbar.add(addBtn); toolbar.add(editBtn); toolbar.add(deleteBtn); toolbar.add(bulkDelBtn);
+        toolbar.add(makeSep());
+        toolbar.add(new JLabel("Category:"));
+        toolbar.add(categoryFilter);
+        toolbar.add(searchField);
+        toolbar.add(searchBtn);
+        toolbar.add(clearBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
 
-        inventoryPanel.add(topInv, BorderLayout.NORTH);
-
-        // --- Inventory Table ---
-        String[] invCols = {"ID", "Name", "Category", "Quantity", "Price"};
-
-        inventoryModel = new DefaultTableModel(invCols, 0) {
+        // Table
+        String[] cols = {"ID", "Name", "Category", "Quantity", "Unit Price", "Supplier"};
+        inventoryModel = new DefaultTableModel(cols, 0) {
             public boolean isCellEditable(int r, int c) { return false; }
             public Class<?> getColumnClass(int c) {
-                // Allows numeric sorting on Quantity and Price columns
                 if (c == 0 || c == 3) return Integer.class;
                 if (c == 4) return Double.class;
                 return String.class;
             }
         };
 
-        JTable invTable = new JTable(inventoryModel);
-        invTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION); // NEW: multi-select for bulk
-
-        // NEW: Enable column sorting
+        JTable invTable = makeStyledTable(inventoryModel);
+        invTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         inventorySorter = new TableRowSorter<>(inventoryModel);
         invTable.setRowSorter(inventorySorter);
 
-        JScrollPane invScroll = new JScrollPane(invTable);
-        inventoryPanel.add(invScroll, BorderLayout.CENTER);
+        // Column widths
+        invTable.getColumnModel().getColumn(0).setPreferredWidth(50);
+        invTable.getColumnModel().getColumn(1).setPreferredWidth(200);
+        invTable.getColumnModel().getColumn(2).setPreferredWidth(130);
+        invTable.getColumnModel().getColumn(3).setPreferredWidth(80);
+        invTable.getColumnModel().getColumn(4).setPreferredWidth(100);
+        invTable.getColumnModel().getColumn(5).setPreferredWidth(160);
 
-        tabs.addTab("Inventory", inventoryPanel);
+        panel.add(new JScrollPane(invTable), BorderLayout.CENTER);
 
-        // ==================================================
-        // NEW: STOCK HISTORY TAB
-        // ==================================================
-        JPanel stockHistoryPanel = new JPanel(new BorderLayout());
-
-        String[] stockCols = {"Date/Time", "Product ID", "Product Name", "Type", "Quantity Changed", "Remarks"};
-        stockHistoryModel = new DefaultTableModel(stockCols, 0) {
-            public boolean isCellEditable(int r, int c) { return false; }
-        };
-
-        JTable stockTable = new JTable(stockHistoryModel);
-        JScrollPane stockScroll = new JScrollPane(stockTable);
-        stockHistoryPanel.add(stockScroll, BorderLayout.CENTER);
-
-        JButton clearHistoryBtn = makeActionButton("Clear History", new Color(127, 140, 141));
-        JPanel stockBtnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        stockBtnPanel.add(clearHistoryBtn);
-        stockHistoryPanel.add(stockBtnPanel, BorderLayout.NORTH);
-
-        tabs.addTab("Stock History", stockHistoryPanel);
-
-        // ==================================================
-        // USER TAB
-        // ==================================================
-        JPanel userPanel = new JPanel(new BorderLayout());
-        JPanel userTop = new JPanel(new FlowLayout(FlowLayout.LEFT));
-
-        JButton addUserBtn    = makeActionButton("Add User",    new Color(39, 174, 96));
-        JButton editUserBtn   = makeActionButton("Edit User",   new Color(52, 152, 219)); // NEW
-        JButton deleteUserBtn = makeActionButton("Delete User", new Color(231, 76, 60));
-
-        userTop.add(addUserBtn);
-        userTop.add(editUserBtn);
-        userTop.add(deleteUserBtn);
-        userPanel.add(userTop, BorderLayout.NORTH);
-
-        String[] userCols = {"ID", "Username", "Role", "Status"};
-        userModel = new DefaultTableModel(userCols, 0) {
-            public boolean isCellEditable(int r, int c) { return false; }
-        };
-
-        JTable userTable = new JTable(userModel);
-        JScrollPane userScroll = new JScrollPane(userTable);
-        userPanel.add(userScroll, BorderLayout.CENTER);
-
-        tabs.addTab("Users", userPanel);
-
-        // ==================================================
-        // LOG TAB
-        // ==================================================
-        JPanel logPanel = new JPanel(new BorderLayout());
-        logArea = new JTextArea();
-        logArea.setEditable(false);
-        JScrollPane logScroll = new JScrollPane(logArea);
-        logPanel.add(logScroll, BorderLayout.CENTER);
-
-        JButton clearLogBtn = makeActionButton("Clear Logs", new Color(127, 140, 141));
-        JPanel logBtnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        logBtnPanel.add(clearLogBtn);
-        logPanel.add(logBtnPanel, BorderLayout.NORTH);
-
-        tabs.addTab("Audit Logs", logPanel);
-
-        frame.add(tabs, BorderLayout.CENTER);
-
-        // ==================================================
-        // LOAD DATABASE DATA
-        // ==================================================
-        loadProductsFromDatabase();
-        loadUsersFromDatabase();
-        refreshInventoryTable();
-        refreshUserTable();
-        refreshDashboard();
-        refreshCategoryFilter(categoryFilter); // NEW
-        addLog("Admin dashboard opened");
-
-        // NEW: Show low stock alert on startup
-        checkLowStockAlert(frame);
-
-        // ==================================================
-        // SIDEBAR ACTIONS
-        // ==================================================
-        dashBtn.addActionListener(e -> tabs.setSelectedIndex(0));
-        invBtn.addActionListener(e -> tabs.setSelectedIndex(1));
-        userBtn.addActionListener(e -> tabs.setSelectedIndex(3));
-        logBtn.addActionListener(e -> tabs.setSelectedIndex(4));
-
-        logoutBtn.addActionListener(e -> {
-            frame.dispose();
-            new Login();
-        });
-
-        // ==================================================
-        // ADD PRODUCT
-        // ==================================================
+        // ---- Add ----
         addBtn.addActionListener(e -> {
-            JTextField nameF     = new JTextField();
-            JTextField categoryF = new JTextField();
-            JTextField qtyF      = new JTextField();
-            JTextField priceF    = new JTextField();
+            JTextField nameF = new JTextField();
+            JTextField catF  = new JTextField();
+            JTextField qtyF  = new JTextField();
+            JTextField priceF= new JTextField();
+            JComboBox<String> supBox = new JComboBox<>();
+            supBox.addItem("(none)");
+            for (Supplier s : suppliers) supBox.addItem(s.name);
 
             Object[] fields = {
-                "Name:", nameF,
-                "Category:", categoryF,
-                "Quantity:", qtyF,
-                "Price:", priceF
+                "Name:", nameF, "Category:", catF,
+                "Quantity:", qtyF, "Unit Price (₱):", priceF, "Supplier:", supBox
             };
-
-            int result = JOptionPane.showConfirmDialog(frame, fields, "Add Product", JOptionPane.OK_CANCEL_OPTION);
-
-            if (result == JOptionPane.OK_OPTION) {
+            if (JOptionPane.showConfirmDialog(frame, fields, "Add Product",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
                 try {
+                    String sup = supBox.getSelectedItem().toString().equals("(none)") ? "" : supBox.getSelectedItem().toString();
                     Connection conn = DatabaseConnection.connect();
-                    String sql = "INSERT INTO products(name,category,quantity,price) VALUES(?,?,?,?)";
-                    PreparedStatement pst = conn.prepareStatement(sql);
-                    pst.setString(1, nameF.getText());
-                    pst.setString(2, categoryF.getText());
-                    pst.setInt(3, Integer.parseInt(qtyF.getText().replace(",", "").trim()));
-                    pst.setDouble(4, Double.parseDouble(priceF.getText().replace(",", "").trim()));
-                    pst.executeUpdate();
-                    conn.close();
-
-                    addLog("Added Product: " + nameF.getText());
-                    loadProductsFromDatabase();
-                    refreshInventoryTable();
-                    refreshDashboard();
-                    refreshCategoryFilter(categoryFilter); // NEW
-                    checkLowStockAlert(frame);             // NEW
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                    JOptionPane.showMessageDialog(frame, "Error: " + ex.getMessage());
-                }
+                    // Check if supplier column exists
+                    boolean hasSupplier = columnExists(conn, "products", "supplier");
+                    PreparedStatement pst;
+                    if (hasSupplier) {
+                        pst = conn.prepareStatement("INSERT INTO products(name,category,quantity,price,supplier) VALUES(?,?,?,?,?)");
+                        pst.setString(1, nameF.getText()); pst.setString(2, catF.getText());
+                        pst.setInt(3, intVal(qtyF.getText())); pst.setDouble(4, doubleVal(priceF.getText()));
+                        pst.setString(5, sup);
+                    } else {
+                        pst = conn.prepareStatement("INSERT INTO products(name,category,quantity,price) VALUES(?,?,?,?)");
+                        pst.setString(1, nameF.getText()); pst.setString(2, catF.getText());
+                        pst.setInt(3, intVal(qtyF.getText())); pst.setDouble(4, doubleVal(priceF.getText()));
+                    }
+                    pst.executeUpdate(); conn.close();
+                    addLog("Added product: " + nameF.getText());
+                    reload(frame, categoryFilter, null, null);
+                } catch (Exception ex) { showError(frame, ex); }
             }
         });
 
-        // ==================================================
-        // DELETE PRODUCT
-        // ==================================================
-        deleteBtn.addActionListener(e -> {
-            int row = invTable.getSelectedRow();
-            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a product first."); return; }
-
-            int modelRow = invTable.convertRowIndexToModel(row);
-            int id = Integer.parseInt(inventoryModel.getValueAt(modelRow, 0).toString());
-
-            int confirm = JOptionPane.showConfirmDialog(frame, "Delete this product?", "Confirm", JOptionPane.YES_NO_OPTION);
-            if (confirm != JOptionPane.YES_OPTION) return;
-
-            try {
-                Connection conn = DatabaseConnection.connect();
-                PreparedStatement pst = conn.prepareStatement("DELETE FROM products WHERE id=?");
-                pst.setInt(1, id);
-                pst.executeUpdate();
-                conn.close();
-
-                addLog("Deleted Product ID: " + id);
-                loadProductsFromDatabase();
-                refreshInventoryTable();
-                refreshDashboard();
-                refreshCategoryFilter(categoryFilter);
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        });
-
-        // ==================================================
-        // NEW: BULK DELETE
-        // ==================================================
-        bulkDelBtn.addActionListener(e -> {
-            int[] selectedRows = invTable.getSelectedRows();
-            if (selectedRows.length == 0) {
-                JOptionPane.showMessageDialog(frame, "Select at least one product.");
-                return;
-            }
-
-            int confirm = JOptionPane.showConfirmDialog(frame,
-                "Delete " + selectedRows.length + " selected product(s)?",
-                "Bulk Delete Confirm", JOptionPane.YES_NO_OPTION);
-            if (confirm != JOptionPane.YES_OPTION) return;
-
-            try {
-                Connection conn = DatabaseConnection.connect();
-                for (int viewRow : selectedRows) {
-                    int modelRow = invTable.convertRowIndexToModel(viewRow);
-                    int id = Integer.parseInt(inventoryModel.getValueAt(modelRow, 0).toString());
-                    PreparedStatement pst = conn.prepareStatement("DELETE FROM products WHERE id=?");
-                    pst.setInt(1, id);
-                    pst.executeUpdate();
-                    addLog("Bulk Deleted Product ID: " + id);
-                }
-                conn.close();
-                loadProductsFromDatabase();
-                refreshInventoryTable();
-                refreshDashboard();
-                refreshCategoryFilter(categoryFilter);
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        });
-
-        // ==================================================
-        // EDIT PRODUCT
-        // ==================================================
+        // ---- Edit ----
         editBtn.addActionListener(e -> {
             int row = invTable.getSelectedRow();
             if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a product first."); return; }
+            int mr = invTable.convertRowIndexToModel(row);
+            int id = (int) inventoryModel.getValueAt(mr, 0);
 
-            int modelRow = invTable.convertRowIndexToModel(row);
-            int id = Integer.parseInt(inventoryModel.getValueAt(modelRow, 0).toString());
-
-            JTextField nameF     = new JTextField(inventoryModel.getValueAt(modelRow, 1).toString());
-            JTextField categoryF = new JTextField(inventoryModel.getValueAt(modelRow, 2).toString());
-            JTextField qtyF      = new JTextField(inventoryModel.getValueAt(modelRow, 3).toString());
-            JTextField priceF    = new JTextField(inventoryModel.getValueAt(modelRow, 4).toString());
+            JTextField nameF  = new JTextField(str(inventoryModel.getValueAt(mr, 1)));
+            JTextField catF   = new JTextField(str(inventoryModel.getValueAt(mr, 2)));
+            JTextField qtyF   = new JTextField(str(inventoryModel.getValueAt(mr, 3)));
+            JTextField priceF = new JTextField(str(inventoryModel.getValueAt(mr, 4)));
+            JComboBox<String> supBox = new JComboBox<>();
+            supBox.addItem("(none)");
+            for (Supplier s : suppliers) supBox.addItem(s.name);
+            supBox.setSelectedItem(str(inventoryModel.getValueAt(mr, 5)));
 
             Object[] fields = {
-                "Name:", nameF,
-                "Category:", categoryF,
-                "Quantity:", qtyF,
-                "Price:", priceF
+                "Name:", nameF, "Category:", catF,
+                "Quantity:", qtyF, "Unit Price (₱):", priceF, "Supplier:", supBox
             };
-
-            int result = JOptionPane.showConfirmDialog(frame, fields, "Edit Product", JOptionPane.OK_CANCEL_OPTION);
-
-            if (result == JOptionPane.OK_OPTION) {
+            if (JOptionPane.showConfirmDialog(frame, fields, "Edit Product",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
                 try {
+                    String sup = supBox.getSelectedItem().toString().equals("(none)") ? "" : supBox.getSelectedItem().toString();
                     Connection conn = DatabaseConnection.connect();
-                    String sql = "UPDATE products SET name=?,category=?,quantity=?,price=? WHERE id=?";
-                    PreparedStatement pst = conn.prepareStatement(sql);
-                    pst.setString(1, nameF.getText());
-                    pst.setString(2, categoryF.getText());
-                    pst.setInt(3, Integer.parseInt(qtyF.getText()));
-                    pst.setDouble(4, Double.parseDouble(priceF.getText()));
-                    pst.setInt(5, id);
-                    pst.executeUpdate();
-                    conn.close();
-
-                    addLog("Updated Product ID: " + id);
-                    loadProductsFromDatabase();
-                    refreshInventoryTable();
-                    refreshDashboard();
-                    refreshCategoryFilter(categoryFilter);
-                    checkLowStockAlert(frame);
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-            }
-        });
-
-        // ==================================================
-        // NEW: STOCK IN
-        // ==================================================
-        stockInBtn.addActionListener(e -> {
-            int row = invTable.getSelectedRow();
-            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a product first."); return; }
-
-            int modelRow = invTable.convertRowIndexToModel(row);
-            int id       = Integer.parseInt(inventoryModel.getValueAt(modelRow, 0).toString());
-            String name  = inventoryModel.getValueAt(modelRow, 1).toString();
-            int curQty   = Integer.parseInt(inventoryModel.getValueAt(modelRow, 3).toString());
-
-            JTextField qtyF     = new JTextField();
-            JTextField remarksF = new JTextField();
-            Object[] fields = {"Quantity to Add:", qtyF, "Remarks:", remarksF};
-
-            int result = JOptionPane.showConfirmDialog(frame, fields, "Stock In - " + name, JOptionPane.OK_CANCEL_OPTION);
-            if (result == JOptionPane.OK_OPTION) {
-                try {
-                    int addQty = Integer.parseInt(qtyF.getText().trim());
-                    int newQty = curQty + addQty;
-
-                    Connection conn = DatabaseConnection.connect();
-                    PreparedStatement pst = conn.prepareStatement("UPDATE products SET quantity=? WHERE id=?");
-                    pst.setInt(1, newQty);
-                    pst.setInt(2, id);
-                    pst.executeUpdate();
-                    conn.close();
-
-                    addStockHistory(id, name, "STOCK IN", addQty, remarksF.getText());
-                    addLog("Stock In: " + name + " +" + addQty);
-                    loadProductsFromDatabase();
-                    refreshInventoryTable();
-                    refreshDashboard();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                    JOptionPane.showMessageDialog(frame, "Invalid quantity.");
-                }
-            }
-        });
-
-        // ==================================================
-        // NEW: STOCK OUT
-        // ==================================================
-        stockOutBtn.addActionListener(e -> {
-            int row = invTable.getSelectedRow();
-            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a product first."); return; }
-
-            int modelRow = invTable.convertRowIndexToModel(row);
-            int id       = Integer.parseInt(inventoryModel.getValueAt(modelRow, 0).toString());
-            String name  = inventoryModel.getValueAt(modelRow, 1).toString();
-            int curQty   = Integer.parseInt(inventoryModel.getValueAt(modelRow, 3).toString());
-
-            JTextField qtyF     = new JTextField();
-            JTextField remarksF = new JTextField();
-            Object[] fields = {"Quantity to Remove:", qtyF, "Remarks:", remarksF};
-
-            int result = JOptionPane.showConfirmDialog(frame, fields, "Stock Out - " + name, JOptionPane.OK_CANCEL_OPTION);
-            if (result == JOptionPane.OK_OPTION) {
-                try {
-                    int removeQty = Integer.parseInt(qtyF.getText().trim());
-                    if (removeQty > curQty) {
-                        JOptionPane.showMessageDialog(frame, "Not enough stock! Current: " + curQty);
-                        return;
+                    boolean hasSupplier = columnExists(conn, "products", "supplier");
+                    PreparedStatement pst;
+                    if (hasSupplier) {
+                        pst = conn.prepareStatement("UPDATE products SET name=?,category=?,quantity=?,price=?,supplier=? WHERE id=?");
+                        pst.setString(1, nameF.getText()); pst.setString(2, catF.getText());
+                        pst.setInt(3, intVal(qtyF.getText())); pst.setDouble(4, doubleVal(priceF.getText()));
+                        pst.setString(5, sup); pst.setInt(6, id);
+                    } else {
+                        pst = conn.prepareStatement("UPDATE products SET name=?,category=?,quantity=?,price=? WHERE id=?");
+                        pst.setString(1, nameF.getText()); pst.setString(2, catF.getText());
+                        pst.setInt(3, intVal(qtyF.getText())); pst.setDouble(4, doubleVal(priceF.getText()));
+                        pst.setInt(5, id);
                     }
-                    int newQty = curQty - removeQty;
-
-                    Connection conn = DatabaseConnection.connect();
-                    PreparedStatement pst = conn.prepareStatement("UPDATE products SET quantity=? WHERE id=?");
-                    pst.setInt(1, newQty);
-                    pst.setInt(2, id);
-                    pst.executeUpdate();
-                    conn.close();
-
-                    addStockHistory(id, name, "STOCK OUT", removeQty, remarksF.getText());
-                    addLog("Stock Out: " + name + " -" + removeQty);
-                    loadProductsFromDatabase();
-                    refreshInventoryTable();
-                    refreshDashboard();
-                    checkLowStockAlert(frame);
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                    JOptionPane.showMessageDialog(frame, "Invalid quantity.");
-                }
+                    pst.executeUpdate(); conn.close();
+                    addLog("Updated product ID " + id + ": " + nameF.getText());
+                    reload(frame, categoryFilter, null, null);
+                } catch (Exception ex) { showError(frame, ex); }
             }
         });
 
-        // ==================================================
-        // SEARCH PRODUCT
-        // ==================================================
-        searchBtn.addActionListener(e -> applyFilters(searchField, categoryFilter));
-        searchField.addActionListener(e -> applyFilters(searchField, categoryFilter)); // Enter key
+        // ---- Delete ----
+        deleteBtn.addActionListener(e -> {
+            int row = invTable.getSelectedRow();
+            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a product first."); return; }
+            int mr = invTable.convertRowIndexToModel(row);
+            int id = (int) inventoryModel.getValueAt(mr, 0);
+            if (JOptionPane.showConfirmDialog(frame, "Delete this product?", "Confirm",
+                    JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+            try {
+                Connection conn = DatabaseConnection.connect();
+                conn.prepareStatement("DELETE FROM products WHERE id=" + id).executeUpdate();
+                conn.close();
+                addLog("Deleted product ID " + id);
+                reload(frame, categoryFilter, null, null);
+            } catch (Exception ex) { showError(frame, ex); }
+        });
 
-        clearSearchBtn.addActionListener(e -> {
-            searchField.setText("");
-            categoryFilter.setSelectedIndex(0);
+        // ---- Bulk Delete ----
+        bulkDelBtn.addActionListener(e -> {
+            int[] rows = invTable.getSelectedRows();
+            if (rows.length == 0) { JOptionPane.showMessageDialog(frame, "Select at least one product."); return; }
+            if (JOptionPane.showConfirmDialog(frame, "Delete " + rows.length + " product(s)?",
+                    "Confirm Bulk Delete", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE)
+                    != JOptionPane.YES_OPTION) return;
+            try {
+                Connection conn = DatabaseConnection.connect();
+                for (int vr : rows) {
+                    int mr = invTable.convertRowIndexToModel(vr);
+                    int id = (int) inventoryModel.getValueAt(mr, 0);
+                    conn.prepareStatement("DELETE FROM products WHERE id=" + id).executeUpdate();
+                    addLog("Bulk deleted product ID " + id);
+                }
+                conn.close();
+                reload(frame, categoryFilter, null, null);
+            } catch (Exception ex) { showError(frame, ex); }
+        });
+
+        // ---- Search / Filter ----
+        searchBtn.addActionListener(e -> applyFilters(searchField, categoryFilter));
+        searchField.addActionListener(e -> applyFilters(searchField, categoryFilter));
+        categoryFilter.addActionListener(e -> applyFilters(searchField, categoryFilter));
+        clearBtn.addActionListener(e -> {
+            searchField.setText(""); categoryFilter.setSelectedIndex(0);
             applyFilters(searchField, categoryFilter);
         });
 
-        // ==================================================
-        // NEW: CATEGORY FILTER
-        // ==================================================
-        categoryFilter.addActionListener(e -> applyFilters(searchField, categoryFilter));
+        return panel;
+    }
 
-        // ==================================================
-        // CLEAR STOCK HISTORY
-        // ==================================================
-        clearHistoryBtn.addActionListener(e -> {
-            stockHistoryModel.setRowCount(0);
-            addLog("Stock history cleared");
+    // ==================================================
+    // CATEGORY PANEL
+    // ==================================================
+    static JPanel createCategoryPanel(JFrame frame) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        JPanel toolbar = makeToolbar();
+        JButton addCatBtn    = makeIconBtn("+ Add Category", SUCCESS);
+        JButton editCatBtn   = makeIconBtn("Edit",           PRIMARY);
+        JButton deleteCatBtn = makeIconBtn("Delete",         DANGER);
+        toolbar.add(addCatBtn); toolbar.add(editCatBtn); toolbar.add(deleteCatBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        String[] cols = {"#", "Category Name", "Item Count"};
+        categoryModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) { return false; }
+        };
+
+        JTable table = makeStyledTable(categoryModel);
+        table.getColumnModel().getColumn(0).setPreferredWidth(50);
+        table.getColumnModel().getColumn(1).setPreferredWidth(250);
+        table.getColumnModel().getColumn(2).setPreferredWidth(120);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        refreshCategoryTable();
+
+        addCatBtn.addActionListener(e -> {
+            JTextField nameF = new JTextField();
+            if (JOptionPane.showConfirmDialog(frame, new Object[]{"Category Name:", nameF},
+                    "Add Category", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                    == JOptionPane.OK_OPTION && !nameF.getText().trim().isEmpty()) {
+                try {
+                    Connection conn = DatabaseConnection.connect();
+                    boolean hasCreatedDate = columnExists(conn, "categories", "created_date");
+                    PreparedStatement pst;
+                    if (hasCreatedDate) {
+                        pst = conn.prepareStatement("INSERT INTO categories(name,created_date) VALUES(?,?)");
+                        pst.setString(1, nameF.getText().trim());
+                        pst.setString(2, now());
+                    } else {
+                        pst = conn.prepareStatement("INSERT INTO categories(name) VALUES(?)");
+                        pst.setString(1, nameF.getText().trim());
+                    }
+                    pst.executeUpdate(); conn.close();
+                    addLog("Added category: " + nameF.getText());
+                    loadProductsFromDatabase(); refreshCategoryTable(); refreshDashboard();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
         });
 
-        // ==================================================
-        // CLEAR AUDIT LOGS
-        // ==================================================
-        clearLogBtn.addActionListener(e -> {
-            logArea.setText("");
-            auditLogs.clear();
+        deleteCatBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a category first."); return; }
+            String catName = str(categoryModel.getValueAt(row, 1));
+            if (JOptionPane.showConfirmDialog(frame, "Delete category '" + catName + "'?",
+                    "Confirm", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+                try {
+                    Connection conn = DatabaseConnection.connect();
+                    PreparedStatement pst = conn.prepareStatement("DELETE FROM categories WHERE name=?");
+                    pst.setString(1, catName); pst.executeUpdate(); conn.close();
+                    addLog("Deleted category: " + catName);
+                    loadProductsFromDatabase(); refreshCategoryTable(); refreshDashboard();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
         });
 
-        // ==================================================
-        // ADD USER
-        // ==================================================
-        addUserBtn.addActionListener(e -> {
-            JTextField userF = new JTextField();
-            JTextField passF = new JTextField();
-            JComboBox<String> roleBox = new JComboBox<>(new String[]{"admin", "staff"});
+        return panel;
+    }
 
-            Object[] fields = {"Username:", userF, "Password:", passF, "Role:", roleBox};
-            int result = JOptionPane.showConfirmDialog(frame, fields, "Add User", JOptionPane.OK_CANCEL_OPTION);
+    // ==================================================
+    // STOCK IN/OUT PANEL
+    // ==================================================
+    static JPanel createStockPanel(JFrame frame) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
 
-            if (result == JOptionPane.OK_OPTION) {
+        JPanel toolbar = makeToolbar();
+        JButton inBtn  = makeIconBtn("Stock In",  SUCCESS);
+        JButton outBtn = makeIconBtn("Stock Out", DANGER);
+        toolbar.add(inBtn); toolbar.add(outBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        String[] cols = {"Date/Time", "Product ID", "Product Name", "Type", "Quantity", "Remarks"};
+        stockHistoryModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = makeStyledTable(stockHistoryModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        inBtn.addActionListener(e -> {
+            if (inventory.isEmpty()) { JOptionPane.showMessageDialog(frame, "No products in inventory."); return; }
+            JComboBox<String> combo = new JComboBox<>();
+            for (Item item : inventory) combo.addItem(item.id + " - " + item.name);
+            JTextField qtyF = new JTextField(); JTextField remF = new JTextField();
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"Product:", combo, "Quantity to add:", qtyF, "Remarks:", remF},
+                    "Stock In", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                try {
+                    int id = Integer.parseInt(combo.getSelectedItem().toString().split(" - ")[0]);
+                    Item item = findItemById(id);
+                    if (item == null) return;
+                    int addQ = intVal(qtyF.getText());
+                    Connection conn = DatabaseConnection.connect();
+                    conn.prepareStatement("UPDATE products SET quantity=" + (item.quantity + addQ) + " WHERE id=" + id).executeUpdate();
+                    conn.close();
+                    addStockHistory(id, item.name, "STOCK IN", addQ, remF.getText());
+                    addLog("Stock In: " + item.name + " +" + addQ);
+                    loadProductsFromDatabase(); refreshInventoryTable(); refreshDashboard(); refreshStockHistoryTable();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
+
+        outBtn.addActionListener(e -> {
+            if (inventory.isEmpty()) { JOptionPane.showMessageDialog(frame, "No products in inventory."); return; }
+            JComboBox<String> combo = new JComboBox<>();
+            for (Item item : inventory) combo.addItem(item.id + " - " + item.name + " (Stock: " + item.quantity + ")");
+            JTextField qtyF = new JTextField(); JTextField remF = new JTextField();
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"Product:", combo, "Quantity to remove:", qtyF, "Remarks:", remF},
+                    "Stock Out", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                try {
+                    int id = Integer.parseInt(combo.getSelectedItem().toString().split(" - ")[0]);
+                    Item item = findItemById(id);
+                    if (item == null) return;
+                    int remQ = intVal(qtyF.getText());
+                    if (remQ > item.quantity) {
+                        JOptionPane.showMessageDialog(frame, "Insufficient stock! Current: " + item.quantity); return;
+                    }
+                    Connection conn = DatabaseConnection.connect();
+                    conn.prepareStatement("UPDATE products SET quantity=" + (item.quantity - remQ) + " WHERE id=" + id).executeUpdate();
+                    conn.close();
+                    addStockHistory(id, item.name, "STOCK OUT", remQ, remF.getText());
+                    addLog("Stock Out: " + item.name + " -" + remQ);
+                    loadProductsFromDatabase(); refreshInventoryTable(); refreshDashboard();
+                    refreshStockHistoryTable(); checkLowStockAlert(frame);
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
+
+        return panel;
+    }
+
+    // ==================================================
+    // USER PANEL
+    // ==================================================
+    static JPanel createUserPanel(JFrame frame) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        JPanel toolbar = makeToolbar();
+        JButton addBtn    = makeIconBtn("+ Add User",  SUCCESS);
+        JButton editBtn   = makeIconBtn("Edit User",   PRIMARY);
+        JButton deleteBtn = makeIconBtn("Delete User", DANGER);
+        toolbar.add(addBtn); toolbar.add(editBtn); toolbar.add(deleteBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        String[] cols = {"ID", "Username", "Role", "Status"};
+        userModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = makeStyledTable(userModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        addBtn.addActionListener(e -> {
+            JTextField userF = new JTextField(); JPasswordField passF = new JPasswordField();
+            JComboBox<String> roleBox = new JComboBox<>(new String[]{"admin", "staff", "manager"});
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"Username:", userF, "Password:", passF, "Role:", roleBox},
+                    "Add User", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
                 try {
                     Connection conn = DatabaseConnection.connect();
                     PreparedStatement pst = conn.prepareStatement(
-                        "INSERT INTO users(username,password,role,active) VALUES(?,?,?,?)");
-                    pst.setString(1, userF.getText());
-                    pst.setString(2, passF.getText());
-                    pst.setString(3, roleBox.getSelectedItem().toString());
-                    pst.setBoolean(4, true);
-                    pst.executeUpdate();
-                    conn.close();
-
-                    addLog("Added User: " + userF.getText());
-                    loadUsersFromDatabase();
-                    refreshUserTable();
-                    refreshDashboard();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
+                        "INSERT INTO users(username,password,role,active,created_date) VALUES(?,?,?,?,?)");
+                    pst.setString(1, userF.getText()); pst.setString(2, new String(passF.getPassword()));
+                    pst.setString(3, str(roleBox.getSelectedItem()));
+                    pst.setBoolean(4, true); pst.setString(5, now());
+                    pst.executeUpdate(); conn.close();
+                    addLog("Added user: " + userF.getText() + " [" + roleBox.getSelectedItem() + "]");
+                    loadUsersFromDatabase(); refreshUserTable(); refreshDashboard();
+                } catch (Exception ex) { showError(frame, ex); }
             }
         });
 
-        // ==================================================
-        // NEW: EDIT USER (role & password)
-        // ==================================================
-        editUserBtn.addActionListener(e -> {
-            int row = userTable.getSelectedRow();
+        editBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
             if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a user first."); return; }
+            int id = (int) userModel.getValueAt(row, 0);
+            JPasswordField passF = new JPasswordField();
+            JComboBox<String> roleBox = new JComboBox<>(new String[]{"admin", "staff", "manager"});
+            roleBox.setSelectedItem(str(userModel.getValueAt(row, 2)));
+            JCheckBox activeBox = new JCheckBox("Active", str(userModel.getValueAt(row, 3)).equals("Active"));
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"New Password:", passF, "Role:", roleBox, "Status:", activeBox},
+                    "Edit User #" + id, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                try {
+                    String newPass = new String(passF.getPassword());
+                    Connection conn = DatabaseConnection.connect();
+                    PreparedStatement pst = conn.prepareStatement("UPDATE users SET password=?,role=?,active=? WHERE id=?");
+                    pst.setString(1, newPass.isEmpty() ? str(userModel.getValueAt(row, 1)) : newPass);
+                    pst.setString(2, str(roleBox.getSelectedItem()));
+                    pst.setBoolean(3, activeBox.isSelected()); pst.setInt(4, id);
+                    pst.executeUpdate(); conn.close();
+                    addLog("Edited user ID " + id);
+                    loadUsersFromDatabase(); refreshUserTable();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
 
-            int id           = Integer.parseInt(userModel.getValueAt(row, 0).toString());
-            String curUser   = userModel.getValueAt(row, 1).toString();
-            String curRole   = userModel.getValueAt(row, 2).toString();
-
-            JTextField passF = new JTextField("(enter new password)");
-            JComboBox<String> roleBox = new JComboBox<>(new String[]{"admin", "staff"});
-            roleBox.setSelectedItem(curRole);
-            JCheckBox activeBox = new JCheckBox("Active", userModel.getValueAt(row, 3).toString().equals("Active"));
-
-            Object[] fields = {
-                "User: " + curUser + " (ID: " + id + ")",
-                new JLabel(""),
-                "New Password:", passF,
-                "Role:", roleBox,
-                "Status:", activeBox
-            };
-
-            int result = JOptionPane.showConfirmDialog(frame, fields, "Edit User", JOptionPane.OK_CANCEL_OPTION);
-            if (result == JOptionPane.OK_OPTION) {
+        deleteBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a user first."); return; }
+            int id = (int) userModel.getValueAt(row, 0);
+            String uname = str(userModel.getValueAt(row, 1));
+            if (JOptionPane.showConfirmDialog(frame, "Delete user '" + uname + "'?",
+                    "Confirm", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
                 try {
                     Connection conn = DatabaseConnection.connect();
-                    String sql = "UPDATE users SET password=?,role=?,active=? WHERE id=?";
-                    PreparedStatement pst = conn.prepareStatement(sql);
-                    pst.setString(1, passF.getText());
-                    pst.setString(2, roleBox.getSelectedItem().toString());
-                    pst.setBoolean(3, activeBox.isSelected());
-                    pst.setInt(4, id);
-                    pst.executeUpdate();
-                    conn.close();
+                    conn.prepareStatement("DELETE FROM users WHERE id=" + id).executeUpdate(); conn.close();
+                    addLog("Deleted user ID " + id + " (" + uname + ")");
+                    loadUsersFromDatabase(); refreshUserTable(); refreshDashboard();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
 
-                    addLog("Edited User ID: " + id + " | Role: " + roleBox.getSelectedItem());
-                    loadUsersFromDatabase();
-                    refreshUserTable();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
+        return panel;
+    }
+
+    // ==================================================
+    // SUPPLIER PANEL
+    // ==================================================
+    static JPanel createSupplierPanel(JFrame frame) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        JPanel toolbar = makeToolbar();
+        JButton addBtn    = makeIconBtn("+ Add Supplier",  SUCCESS);
+        JButton editBtn   = makeIconBtn("Edit",            PRIMARY);
+        JButton deleteBtn = makeIconBtn("Delete",          DANGER);
+        toolbar.add(addBtn); toolbar.add(editBtn); toolbar.add(deleteBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        String[] cols = {"ID", "Name", "Contact", "Email", "Address"};
+        supplierModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = makeStyledTable(supplierModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        addBtn.addActionListener(e -> {
+            JTextField nameF = new JTextField(), contactF = new JTextField(),
+                       emailF = new JTextField(), addrF = new JTextField();
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"Name:", nameF, "Contact:", contactF, "Email:", emailF, "Address:", addrF},
+                    "Add Supplier", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                try {
+                    Connection conn = DatabaseConnection.connect();
+                    PreparedStatement pst = conn.prepareStatement(
+                        "INSERT INTO suppliers(name,contact,email,address) VALUES(?,?,?,?)");
+                    pst.setString(1, nameF.getText()); pst.setString(2, contactF.getText());
+                    pst.setString(3, emailF.getText()); pst.setString(4, addrF.getText());
+                    pst.executeUpdate(); conn.close();
+                    addLog("Added supplier: " + nameF.getText());
+                    loadSuppliersFromDatabase(); refreshSupplierTable(); refreshDashboard();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
+
+        editBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a supplier first."); return; }
+            int id = (int) supplierModel.getValueAt(row, 0);
+            JTextField nameF    = new JTextField(str(supplierModel.getValueAt(row, 1)));
+            JTextField contactF = new JTextField(str(supplierModel.getValueAt(row, 2)));
+            JTextField emailF   = new JTextField(str(supplierModel.getValueAt(row, 3)));
+            JTextField addrF    = new JTextField(str(supplierModel.getValueAt(row, 4)));
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"Name:", nameF, "Contact:", contactF, "Email:", emailF, "Address:", addrF},
+                    "Edit Supplier", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                try {
+                    Connection conn = DatabaseConnection.connect();
+                    PreparedStatement pst = conn.prepareStatement(
+                        "UPDATE suppliers SET name=?,contact=?,email=?,address=? WHERE id=?");
+                    pst.setString(1, nameF.getText()); pst.setString(2, contactF.getText());
+                    pst.setString(3, emailF.getText()); pst.setString(4, addrF.getText()); pst.setInt(5, id);
+                    pst.executeUpdate(); conn.close();
+                    addLog("Updated supplier ID " + id);
+                    loadSuppliersFromDatabase(); refreshSupplierTable();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
+
+        deleteBtn.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a supplier first."); return; }
+            int id = (int) supplierModel.getValueAt(row, 0);
+            String name = str(supplierModel.getValueAt(row, 1));
+            if (JOptionPane.showConfirmDialog(frame, "Delete supplier '" + name + "'?",
+                    "Confirm", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+                try {
+                    Connection conn = DatabaseConnection.connect();
+                    conn.prepareStatement("DELETE FROM suppliers WHERE id=" + id).executeUpdate(); conn.close();
+                    addLog("Deleted supplier ID " + id);
+                    loadSuppliersFromDatabase(); refreshSupplierTable(); refreshDashboard();
+                } catch (Exception ex) { showError(frame, ex); }
+            }
+        });
+
+        return panel;
+    }
+
+    // ==================================================
+    // REPORT PANEL
+    // ==================================================
+    static JPanel createReportPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        JPanel toolbar = makeToolbar();
+        JComboBox<String> typeBox = new JComboBox<>(
+            new String[]{"Inventory Summary", "Low Stock Items", "High Value Items"});
+        typeBox.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        JButton genBtn = makeIconBtn("Generate Report", PRIMARY);
+        toolbar.add(new JLabel("Report Type:")); toolbar.add(typeBox); toolbar.add(genBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        String[] cols = {"Name", "Quantity", "Total Value (₱)", "Category", "Supplier"};
+        reportModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = makeStyledTable(reportModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        genBtn.addActionListener(e -> {
+            reportModel.setRowCount(0);
+            String sel = str(typeBox.getSelectedItem());
+            for (Item item : inventory) {
+                boolean show = sel.equals("Inventory Summary") ||
+                    (sel.equals("Low Stock Items") && item.quantity < 10) ||
+                    (sel.equals("High Value Items") && item.price * item.quantity > 10000);
+                if (show) reportModel.addRow(new Object[]{
+                    item.name, item.quantity,
+                    String.format("%.2f", item.quantity * item.price),
+                    item.category, item.supplier
+                });
+            }
+            addLog("Generated report: " + sel);
+        });
+
+        return panel;
+    }
+
+    // ==================================================
+    // STOCK HISTORY PANEL
+    // ==================================================
+    static JPanel createStockHistoryPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        JPanel toolbar = makeToolbar();
+        JButton clearBtn  = makeIconBtn("Clear History", DANGER);
+        JButton exportBtn = makeIconBtn("Export CSV",    PRIMARY);
+        toolbar.add(clearBtn); toolbar.add(exportBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        String[] cols = {"Date/Time", "Product ID", "Product Name", "Type", "Quantity", "Remarks"};
+        stockHistoryModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = makeStyledTable(stockHistoryModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
+
+        refreshStockHistoryTable();
+
+        clearBtn.addActionListener(e -> {
+            if (JOptionPane.showConfirmDialog(null, "Clear all stock history?",
+                    "Confirm", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+                stockHistoryModel.setRowCount(0); stockHistories.clear();
+                addLog("Stock history cleared.");
+            }
+        });
+
+        exportBtn.addActionListener(e -> {
+            JFileChooser fc = new JFileChooser();
+            fc.setSelectedFile(new File("stock_history.csv"));
+            if (fc.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+                try (PrintWriter pw = new PrintWriter(fc.getSelectedFile())) {
+                    pw.println("Date/Time,Product ID,Product Name,Type,Quantity,Remarks");
+                    for (StockHistory sh : stockHistories) {
+                        pw.printf("\"%s\",%d,\"%s\",\"%s\",%d,\"%s\"%n",
+                            sh.timestamp, sh.productId, sh.productName, sh.type, sh.quantity, sh.remarks);
+                    }
+                    JOptionPane.showMessageDialog(null, "Exported successfully!");
+                    addLog("Stock history exported to CSV.");
+                } catch (Exception ex) { showError(null, ex); }
+            }
+        });
+
+        return panel;
+    }
+
+    // ==================================================
+    // AUDIT LOG PANEL
+    // ==================================================
+    static JPanel createAuditLogPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBackground(SURFACE);
+
+        JPanel toolbar = makeToolbar();
+        JButton clearBtn = makeIconBtn("Clear Logs", DANGER);
+        toolbar.add(clearBtn);
+        panel.add(toolbar, BorderLayout.NORTH);
+
+        logArea = new JTextArea();
+        logArea.setEditable(false);
+        logArea.setFont(new Font("Consolas", Font.PLAIN, 12));
+        logArea.setBackground(new Color(15, 23, 42));
+        logArea.setForeground(new Color(148, 163, 184));
+        logArea.setCaretColor(Color.WHITE);
+        logArea.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        panel.add(new JScrollPane(logArea), BorderLayout.CENTER);
+
+        clearBtn.addActionListener(e -> {
+            logArea.setText(""); auditLogs.clear(); addLog("Audit logs cleared.");
+        });
+
+        return panel;
+    }
+
+    // ==================================================
+    // SETTINGS PANEL
+    // ==================================================
+    static JScrollPane createSettingsPanel(JFrame frame) {
+        JPanel wrapper = new JPanel();
+        wrapper.setBackground(SURFACE);
+        wrapper.setLayout(new BoxLayout(wrapper, BoxLayout.Y_AXIS));
+        wrapper.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+
+        // System settings card
+        JPanel sysCard = makeSettingsCard("System Preferences");
+        JCheckBox lowStockCb    = new JCheckBox("Enable Low Stock Alerts (threshold: 10 units)", true);
+        JCheckBox emailCb       = new JCheckBox("Enable Email Notifications", false);
+        JCheckBox autoBkupCb    = new JCheckBox("Auto Backup Database Daily", true);
+        styleCheckbox(lowStockCb); styleCheckbox(emailCb); styleCheckbox(autoBkupCb);
+        sysCard.add(lowStockCb); sysCard.add(Box.createVerticalStrut(8));
+        sysCard.add(emailCb);    sysCard.add(Box.createVerticalStrut(8));
+        sysCard.add(autoBkupCb);
+        wrapper.add(sysCard); wrapper.add(Box.createVerticalStrut(16));
+
+        // DB settings card
+        JPanel dbCard = makeSettingsCard("Database Connection");
+        JLabel dbHost = makeSettingLabel("Host: localhost");
+        JLabel dbName = makeSettingLabel("Database: inventory_db");
+        JButton testBtn = makeIconBtn("Test Connection", PRIMARY);
+        dbCard.add(dbHost); dbCard.add(Box.createVerticalStrut(8));
+        dbCard.add(dbName); dbCard.add(Box.createVerticalStrut(12));
+        dbCard.add(testBtn);
+        wrapper.add(dbCard); wrapper.add(Box.createVerticalStrut(16));
+
+        // Account card
+        JPanel accCard = makeSettingsCard("Account Security");
+        JButton chgPassBtn = makeIconBtn("Change Password", PRIMARY);
+        accCard.add(chgPassBtn);
+        wrapper.add(accCard);
+        wrapper.add(Box.createVerticalGlue());
+
+        testBtn.addActionListener(e -> {
+            try {
+                Connection conn = DatabaseConnection.connect();
+                if (conn != null && !conn.isClosed()) {
+                    JOptionPane.showMessageDialog(frame, "Connection successful!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                    conn.close();
+                }
+            } catch (Exception ex) { JOptionPane.showMessageDialog(frame, "Failed: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE); }
+        });
+
+        chgPassBtn.addActionListener(e -> {
+            JPasswordField oldP = new JPasswordField(), newP = new JPasswordField(), confP = new JPasswordField();
+            if (JOptionPane.showConfirmDialog(frame,
+                    new Object[]{"Old Password:", oldP, "New Password:", newP, "Confirm:", confP},
+                    "Change Password", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+                    == JOptionPane.OK_OPTION) {
+                if (new String(newP.getPassword()).equals(new String(confP.getPassword()))) {
+                    addLog("Password changed.");
+                    JOptionPane.showMessageDialog(frame, "Password updated successfully!");
+                } else {
+                    JOptionPane.showMessageDialog(frame, "Passwords do not match.", "Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
         });
 
-        // ==================================================
-        // DELETE USER
-        // ==================================================
-        deleteUserBtn.addActionListener(e -> {
-            int row = userTable.getSelectedRow();
-            if (row == -1) { JOptionPane.showMessageDialog(frame, "Select a user first."); return; }
-
-            int id = Integer.parseInt(userModel.getValueAt(row, 0).toString());
-            int confirm = JOptionPane.showConfirmDialog(frame, "Delete this user?", "Confirm", JOptionPane.YES_NO_OPTION);
-            if (confirm != JOptionPane.YES_OPTION) return;
-
-            try {
-                Connection conn = DatabaseConnection.connect();
-                PreparedStatement pst = conn.prepareStatement("DELETE FROM users WHERE id=?");
-                pst.setInt(1, id);
-                pst.executeUpdate();
-                conn.close();
-
-                addLog("Deleted User ID: " + id);
-                loadUsersFromDatabase();
-                refreshUserTable();
-                refreshDashboard();
-            } catch (Exception ex) {
-                ex.printStackTrace();
-            }
-        });
-
-        frame.setVisible(true);
+        return new JScrollPane(wrapper);
     }
 
     // ==================================================
-    // NEW: APPLY SEARCH + CATEGORY FILTER TOGETHER
-    // ==================================================
-   static void applyFilters(JTextField searchField, JComboBox<String> categoryFilter) {
-
-    String keyword = searchField.getText().toLowerCase().trim();
-
-    // SAFE NULL CHECK
-    Object selectedObj = categoryFilter.getSelectedItem();
-
-    String category;
-
-    if (selectedObj == null) {
-        category = "All Categories";
-    } else {
-        category = selectedObj.toString();
-    }
-
-    inventoryModel.setRowCount(0);
-
-    for (Item item : inventory) {
-
-        boolean matchSearch =
-                keyword.isEmpty()
-                || item.name.toLowerCase().contains(keyword)
-                || item.category.toLowerCase().contains(keyword);
-
-        boolean matchCategory =
-                category.equals("All Categories")
-                || item.category.equalsIgnoreCase(category);
-
-        if (matchSearch && matchCategory) {
-
-            inventoryModel.addRow(new Object[]{
-                    item.id,
-                    item.name,
-                    item.category,
-                    item.quantity,
-                    item.price
-            });
-        }
-    }
-}
-    // ==================================================
-    // NEW: REFRESH CATEGORY FILTER DROPDOWN
-    // ==================================================
-   static void refreshCategoryFilter(JComboBox<String> categoryFilter) {
-
-    // REMOVE LISTENERS TEMPORARILY
-    ActionListener[] listeners = categoryFilter.getActionListeners();
-
-    for (ActionListener listener : listeners) {
-        categoryFilter.removeActionListener(listener);
-    }
-
-    // GET CURRENT SELECTED VALUE SAFELY
-    String selected = "All Categories";
-
-    if (categoryFilter.getSelectedItem() != null) {
-        selected = categoryFilter.getSelectedItem().toString();
-    }
-
-    // CLEAR ITEMS
-    categoryFilter.removeAllItems();
-
-    // DEFAULT ITEM
-    categoryFilter.addItem("All Categories");
-
-    // ADD UNIQUE CATEGORIES
-    ArrayList<String> seen = new ArrayList<>();
-
-    for (Item item : inventory) {
-
-        if (item.category != null
-                && !item.category.trim().isEmpty()
-                && !seen.contains(item.category)) {
-
-            seen.add(item.category);
-            categoryFilter.addItem(item.category);
-        }
-    }
-
-    // RESTORE PREVIOUS SELECTION
-    categoryFilter.setSelectedItem(selected);
-
-    // IF NOT FOUND
-    if (categoryFilter.getSelectedItem() == null) {
-        categoryFilter.setSelectedIndex(0);
-    }
-
-    // RE-ADD LISTENERS
-    for (ActionListener listener : listeners) {
-        categoryFilter.addActionListener(listener);
-    }
-}
-
-    // ==================================================
-    // NEW: LOW STOCK ALERT POPUP
-    // ==================================================
-    static void checkLowStockAlert(JFrame frame) {
-        ArrayList<String> lowItems = new ArrayList<>();
-        for (Item item : inventory) {
-            if (item.quantity < 10) {
-                lowItems.add("• " + item.name + " (Qty: " + item.quantity + ")");
-            }
-        }
-
-        if (!lowItems.isEmpty()) {
-            StringBuilder sb = new StringBuilder("⚠ LOW STOCK ALERT!\n\nThe following items are below minimum stock (10):\n\n");
-            for (String s : lowItems) sb.append(s).append("\n");
-            sb.append("\nPlease restock as soon as possible.");
-
-            JTextArea ta = new JTextArea(sb.toString());
-            ta.setEditable(false);
-            ta.setBackground(new Color(255, 245, 245));
-            ta.setForeground(new Color(192, 57, 43));
-            ta.setFont(new Font("Arial", Font.PLAIN, 13));
-            ta.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-
-            JOptionPane.showMessageDialog(frame, new JScrollPane(ta), "Low Stock Alert", JOptionPane.WARNING_MESSAGE);
-        }
-    }
-
-    // ==================================================
-    // NEW: ADD STOCK HISTORY RECORD
-    // ==================================================
-    static void addStockHistory(int productId, String productName, String type, int qty, String remarks) {
-        String timestamp = new java.util.Date().toString();
-        stockHistoryModel.addRow(new Object[]{
-            timestamp, productId, productName, type, qty,
-            (remarks == null || remarks.isEmpty()) ? "-" : remarks
-        });
-    }
-
-    // ==================================================
-    // LOAD PRODUCTS
+    // DATABASE HELPERS
     // ==================================================
     static void loadProductsFromDatabase() {
         inventory.clear();
         try {
             Connection conn = DatabaseConnection.connect();
-            PreparedStatement pst = conn.prepareStatement("SELECT * FROM products");
-            ResultSet rs = pst.executeQuery();
+            boolean hasSupplier = columnExists(conn, "products", "supplier");
+            String sql = hasSupplier
+                ? "SELECT id,name,category,quantity,price,supplier FROM products ORDER BY id"
+                : "SELECT id,name,category,quantity,price FROM products ORDER BY id";
+            ResultSet rs = conn.prepareStatement(sql).executeQuery();
             while (rs.next()) {
                 inventory.add(new Item(
-                    rs.getInt("id"),
-                    rs.getString("name"),
-                    rs.getString("category"),
-                    rs.getInt("quantity"),
-                    rs.getDouble("price")
+                    rs.getInt("id"), rs.getString("name"), rs.getString("category"),
+                    rs.getInt("quantity"), rs.getDouble("price"),
+                    hasSupplier ? rs.getString("supplier") : ""
                 ));
             }
             conn.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
-    // ==================================================
-    // LOAD USERS
-    // ==================================================
     static void loadUsersFromDatabase() {
         users.clear();
         try {
             Connection conn = DatabaseConnection.connect();
-            PreparedStatement pst = conn.prepareStatement("SELECT * FROM users");
-            ResultSet rs = pst.executeQuery();
+            ResultSet rs = conn.prepareStatement("SELECT * FROM users ORDER BY id").executeQuery();
             while (rs.next()) {
-                users.add(new User(
-                    rs.getInt("id"),
-                    rs.getString("username"),
-                    rs.getString("password"),
-                    rs.getString("role"),
-                    rs.getBoolean("active")
-                ));
+                users.add(new User(rs.getInt("id"), rs.getString("username"),
+                    rs.getString("password"), rs.getString("role"), rs.getBoolean("active")));
             }
             conn.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    static void loadSuppliersFromDatabase() {
+        suppliers.clear();
+        try {
+            Connection conn = DatabaseConnection.connect();
+            ResultSet rs = conn.prepareStatement("SELECT * FROM suppliers ORDER BY id").executeQuery();
+            while (rs.next()) {
+                suppliers.add(new Supplier(rs.getInt("id"), rs.getString("name"),
+                    rs.getString("contact"), rs.getString("email"), rs.getString("address")));
+            }
+            conn.close();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    static void loadStockHistoriesFromDatabase() {
+        stockHistories.clear();
+        try {
+            Connection conn = DatabaseConnection.connect();
+            ResultSet rs = conn.prepareStatement("SELECT * FROM stock_history ORDER BY id DESC").executeQuery();
+            while (rs.next()) {
+                stockHistories.add(new StockHistory(
+                    rs.getInt("id"), rs.getInt("product_id"), rs.getString("product_name"),
+                    rs.getString("type"), rs.getInt("quantity"),
+                    rs.getString("remarks"), rs.getString("timestamp")));
+            }
+            conn.close();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    // Check if a column exists in a table (handles missing supplier column)
+    static boolean columnExists(Connection conn, String table, String column) {
+        try {
+            ResultSet rs = conn.getMetaData().getColumns(null, null, table, column);
+            return rs.next();
+        } catch (Exception e) { return false; }
     }
 
     // ==================================================
-    // REFRESH INVENTORY TABLE
+    // REFRESH HELPERS
     // ==================================================
     static void refreshInventoryTable() {
+        if (inventoryModel == null) return;
+        inventoryModel.setRowCount(0);
+        for (Item item : inventory)
+            inventoryModel.addRow(new Object[]{item.id, item.name, item.category, item.quantity, item.price, item.supplier});
+    }
+
+    static void refreshUserTable() {
+        if (userModel == null) return;
+        userModel.setRowCount(0);
+        for (User u : users)
+            userModel.addRow(new Object[]{u.id, u.username, u.role, u.active ? "Active" : "Disabled"});
+    }
+
+    static void refreshSupplierTable() {
+        if (supplierModel == null) return;
+        supplierModel.setRowCount(0);
+        for (Supplier s : suppliers)
+            supplierModel.addRow(new Object[]{s.id, s.name, s.contact, s.email, s.address});
+    }
+
+    static void refreshCategoryTable() {
+        if (categoryModel == null) return;
+        categoryModel.setRowCount(0);
+        ArrayList<String> seen = new ArrayList<>();
+        for (Item item : inventory) {
+            if (item.category != null && !item.category.isEmpty() && !seen.contains(item.category))
+                seen.add(item.category);
+        }
+        int idx = 1;
+        for (String cat : seen) {
+            int count = 0;
+            for (Item item : inventory) if (cat.equals(item.category)) count++;
+            categoryModel.addRow(new Object[]{idx++, cat, count});
+        }
+    }
+
+    static void refreshStockHistoryTable() {
+        if (stockHistoryModel == null) return;
+        stockHistoryModel.setRowCount(0);
+        for (StockHistory sh : stockHistories)
+            stockHistoryModel.addRow(new Object[]{sh.timestamp, sh.productId, sh.productName, sh.type, sh.quantity, sh.remarks});
+    }
+
+    static void refreshDashboard() {
+        int totalQty = 0, lowStock = 0; double totalVal = 0;
+        ArrayList<String> cats = new ArrayList<>();
+        for (Item item : inventory) {
+            totalQty += item.quantity; totalVal += item.quantity * item.price;
+            if (item.quantity < 10) lowStock++;
+            if (item.category != null && !cats.contains(item.category)) cats.add(item.category);
+        }
+        if (totalItemsLabel != null) totalItemsLabel.setText(String.valueOf(totalQty));
+        if (totalValueLabel != null)  totalValueLabel.setText("₱ " + String.format("%,.2f", totalVal));
+        if (lowStockLabel != null)    lowStockLabel.setText(String.valueOf(lowStock));
+        if (totalUsersLabel != null)  totalUsersLabel.setText(String.valueOf(users.size()));
+        if (totalSuppliersLabel != null) totalSuppliersLabel.setText(String.valueOf(suppliers.size()));
+        if (totalCategoriesLabel != null) totalCategoriesLabel.setText(String.valueOf(cats.size()));
+    }
+
+    static void applyFilters(JTextField searchField, JComboBox<String> categoryFilter) {
+        if (inventoryModel == null) return;
+        String kw  = searchField.getText().toLowerCase().trim();
+        String cat = str(categoryFilter.getSelectedItem());
         inventoryModel.setRowCount(0);
         for (Item item : inventory) {
-            inventoryModel.addRow(new Object[]{
-                item.id, item.name, item.category, item.quantity, item.price
-            });
+            boolean ms = kw.isEmpty() || item.name.toLowerCase().contains(kw) || item.category.toLowerCase().contains(kw);
+            boolean mc = cat.equals("All Categories") || item.category.equalsIgnoreCase(cat);
+            if (ms && mc)
+                inventoryModel.addRow(new Object[]{item.id, item.name, item.category, item.quantity, item.price, item.supplier});
         }
     }
 
-    // ==================================================
-    // REFRESH USER TABLE
-    // ==================================================
-    static void refreshUserTable() {
-        userModel.setRowCount(0);
-        for (User user : users) {
-            userModel.addRow(new Object[]{
-                user.id, user.username, user.role,
-                user.active ? "Active" : "Disabled"
-            });
+    static void refreshCategoryFilter(JComboBox<String> cb) {
+        String sel = str(cb.getSelectedItem());
+        ActionListener[] ls = cb.getActionListeners();
+        for (ActionListener l : ls) cb.removeActionListener(l);
+        cb.removeAllItems(); cb.addItem("All Categories");
+        ArrayList<String> seen = new ArrayList<>();
+        for (Item item : inventory)
+            if (item.category != null && !item.category.isEmpty() && !seen.contains(item.category)) {
+                seen.add(item.category); cb.addItem(item.category);
+            }
+        cb.setSelectedItem(sel);
+        if (cb.getSelectedItem() == null) cb.setSelectedIndex(0);
+        for (ActionListener l : ls) cb.addActionListener(l);
+    }
+
+    // Reload everything after DB change
+    static void reload(JFrame frame, JComboBox<String> cf, Object a, Object b) {
+        loadProductsFromDatabase();
+        refreshInventoryTable();
+        refreshDashboard();
+        refreshCategoryTable();
+        if (cf != null) refreshCategoryFilter(cf);
+        checkLowStockAlert(frame);
+    }
+
+    static void addStockHistory(int productId, String productName, String type, int qty, String remarks) {
+        String ts = now();
+        stockHistories.add(0, new StockHistory(0, productId, productName, type, qty, remarks, ts));
+        if (stockHistoryModel != null)
+            stockHistoryModel.insertRow(0, new Object[]{ts, productId, productName, type, qty,
+                (remarks == null || remarks.isEmpty()) ? "-" : remarks});
+    }
+
+    static void checkLowStockAlert(JFrame frame) {
+        ArrayList<String> low = new ArrayList<>();
+        for (Item item : inventory) if (item.quantity < 10) low.add("• " + item.name + "  (qty: " + item.quantity + ")");
+        if (!low.isEmpty()) {
+            StringBuilder sb = new StringBuilder("The following items are below minimum stock (10 units):\n\n");
+            for (String s : low) sb.append(s).append("\n");
+            JTextArea ta = new JTextArea(sb.toString());
+            ta.setEditable(false); ta.setOpaque(false);
+            ta.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            JOptionPane.showMessageDialog(frame, ta, "Low Stock Alert", JOptionPane.WARNING_MESSAGE);
         }
     }
 
-    // ==================================================
-    // REFRESH DASHBOARD
-    // ==================================================
-    static void refreshDashboard() {
-        int totalQty = 0;
-        double totalValue = 0;
-        int lowStock = 0;
-
-        for (Item item : inventory) {
-            totalQty   += item.quantity;
-            totalValue += item.quantity * item.price;
-            if (item.quantity < 10) lowStock++;
-        }
-
-        totalItemsLabel.setText(String.valueOf(totalQty));
-        totalValueLabel.setText("PHP " + String.format("%.2f", totalValue));
-        lowStockLabel.setText(String.valueOf(lowStock));
-        totalUsersLabel.setText(String.valueOf(users.size()));
-    }
-
-    // ==================================================
-    // ADD LOG
-    // ==================================================
     static void addLog(String message) {
-        String log = "[" + new java.util.Date() + "] " + message;
-        auditLogs.add(log);
-        if (logArea != null) logArea.append(log + "\n");
+        String ts = now();
+        String line = "[" + ts + "]  " + message;
+        auditLogs.add(line);
+        if (logArea != null) { logArea.append(line + "\n"); logArea.setCaretPosition(logArea.getDocument().getLength()); }
+    }
+
+    static Item findItemById(int id) {
+        for (Item item : inventory) if (item.id == id) return item;
+        return null;
     }
 
     // ==================================================
-    // BUTTON HELPERS
+    // UI BUILDER HELPERS
     // ==================================================
-    static JButton makeSidebarButton(String text) {
+    static JTable makeStyledTable(DefaultTableModel model) {
+        JTable table = new JTable(model);
+        table.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        table.setRowHeight(28);
+        table.setGridColor(BORDER);
+        table.setBackground(CARD_BG);
+        table.setSelectionBackground(new Color(219, 234, 254)); // blue-100
+        table.setSelectionForeground(TEXT_PRIMARY);
+        table.setIntercellSpacing(new Dimension(12, 0));
+        table.setFillsViewportHeight(true);
+
+        JTableHeader hdr = table.getTableHeader();
+        hdr.setBackground(HEADER_BG);
+        hdr.setForeground(Color.WHITE);
+        hdr.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        hdr.setPreferredSize(new Dimension(0, 34));
+        hdr.setBorder(BorderFactory.createEmptyBorder());
+
+        // Alternate row renderer
+        table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable t, Object val,
+                    boolean sel, boolean foc, int row, int col) {
+                super.getTableCellRendererComponent(t, val, sel, foc, row, col);
+                setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+                if (!sel) {
+                    setBackground(row % 2 == 0 ? CARD_BG : SURFACE);
+                    setForeground(TEXT_PRIMARY);
+                }
+                return this;
+            }
+        });
+        return table;
+    }
+
+    static JPanel makeToolbar() {
+        JPanel tb = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 10));
+        tb.setBackground(CARD_BG);
+        tb.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, BORDER),
+            BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        return tb;
+    }
+
+    static JButton makeIconBtn(String text, Color bg) {
         JButton btn = new JButton(text);
-        btn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 45));
-        btn.setBackground(new Color(33, 37, 41));
+        btn.setBackground(bg);
         btn.setForeground(Color.WHITE);
+        btn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         btn.setFocusPainted(false);
-        btn.setBorderPainted(false);
-        btn.setHorizontalAlignment(SwingConstants.LEFT);
+        btn.setBorder(BorderFactory.createEmptyBorder(7, 14, 7, 14));
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btn.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) { btn.setBackground(bg.darker()); }
+            public void mouseExited(MouseEvent e)  { btn.setBackground(bg); }
+        });
         return btn;
     }
 
-    static JButton makeActionButton(String text, Color color) {
+    static void styleSecondaryBtn(JButton btn) {
+        btn.setBackground(new Color(241, 245, 249));
+        btn.setForeground(TEXT_MUTED);
+        btn.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) { btn.setBackground(BORDER); }
+            public void mouseExited(MouseEvent e)  { btn.setBackground(new Color(241, 245, 249)); }
+        });
+    }
+
+    static JButton makePillButton(String text, Color bg, Color fg) {
         JButton btn = new JButton(text);
-        btn.setBackground(color);
-        btn.setForeground(Color.WHITE);
+        btn.setBackground(bg); btn.setForeground(fg);
+        btn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         btn.setFocusPainted(false);
+        btn.setBorder(BorderFactory.createEmptyBorder(6, 16, 6, 16));
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btn.setOpaque(true); btn.setBorderPainted(false);
         return btn;
     }
 
-    static JLabel makeStatLabel() {
+    static JLabel makeDashValue() {
         JLabel lbl = new JLabel("0", JLabel.CENTER);
-        lbl.setFont(new Font("Arial", Font.BOLD, 28));
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 30));
         lbl.setForeground(Color.WHITE);
         return lbl;
     }
 
-    static JPanel makeCard(String title, JLabel value, Color color) {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setBackground(color);
-        JLabel titleLbl = new JLabel(title, JLabel.CENTER);
-        titleLbl.setForeground(Color.WHITE);
-        titleLbl.setFont(new Font("Arial", Font.BOLD, 16));
-        panel.add(titleLbl, BorderLayout.NORTH);
-        panel.add(value, BorderLayout.CENTER);
-        return panel;
+    static JPanel makeDashCard(String title, JLabel value, Color color, String icon) {
+        JPanel card = new JPanel(new BorderLayout(0, 8));
+        card.setBackground(color);
+        card.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+
+        JLabel titleLbl = new JLabel(title.toUpperCase());
+        titleLbl.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        titleLbl.setForeground(new Color(255, 255, 255, 180));
+
+        card.add(titleLbl, BorderLayout.NORTH);
+        card.add(value, BorderLayout.CENTER);
+
+        card.addMouseListener(new MouseAdapter() {
+            public void mouseEntered(MouseEvent e) { card.setBackground(color.darker()); }
+            public void mouseExited(MouseEvent e)  { card.setBackground(color); }
+        });
+        card.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        return card;
+    }
+
+    static JSeparator makeSep() {
+        JSeparator sep = new JSeparator(SwingConstants.VERTICAL);
+        sep.setPreferredSize(new Dimension(1, 24));
+        sep.setForeground(BORDER);
+        return sep;
+    }
+
+    static JPanel makeSettingsCard(String title) {
+        JPanel card = new JPanel();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBackground(CARD_BG);
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.setMaximumSize(new Dimension(600, Integer.MAX_VALUE));
+        card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(BORDER, 1),
+            BorderFactory.createEmptyBorder(16, 20, 16, 20)));
+
+        JLabel lbl = new JLabel(title);
+        lbl.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        lbl.setForeground(PRIMARY);
+        card.add(lbl); card.add(Box.createVerticalStrut(12));
+        return card;
+    }
+
+    static void styleCheckbox(JCheckBox cb) {
+        cb.setBackground(CARD_BG);
+        cb.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        cb.setForeground(TEXT_PRIMARY);
+        cb.setFocusPainted(false);
+    }
+
+    static JLabel makeSettingLabel(String text) {
+        JLabel lbl = new JLabel(text);
+        lbl.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        lbl.setForeground(TEXT_MUTED);
+        return lbl;
+    }
+
+    static void updateClock(JLabel lbl) {
+        lbl.setText(LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy  HH:mm:ss")));
+    }
+
+    // ==================================================
+    // UTILITY
+    // ==================================================
+    static String now() {
+        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+    static String str(Object o) { return o == null ? "" : o.toString(); }
+    static int intVal(String s) { return Integer.parseInt(s.replace(",", "").trim()); }
+    static double doubleVal(String s) { return Double.parseDouble(s.replace(",", "").trim()); }
+    static void showError(Component parent, Exception ex) {
+        ex.printStackTrace();
+        JOptionPane.showMessageDialog(parent, "Error: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     }
 
     // ==================================================
     // MAIN
     // ==================================================
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> openAdminDashboard());
+        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch (Exception ignored) {}
+        SwingUtilities.invokeLater(Admin::openAdminDashboard);
     }
 }

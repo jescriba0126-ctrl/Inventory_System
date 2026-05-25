@@ -1,0 +1,277 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.geom.*;
+import java.sql.*;
+
+// =====================================================
+//  guiadmin.java
+//  This file has the GUI login window and the register
+//  popup dialog. Both are launched from Login.java.
+// =====================================================
+
+class LoginFrame extends JFrame {
+
+    public LoginFrame() {
+
+        setTitle("Inventory System");
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setSize(460, 560);
+        setLocationRelativeTo(null);
+        setUndecorated(true);
+        setShape(new RoundRectangle2D.Double(0, 0, 460, 560, 24, 24));
+
+        StarfieldPanel bg = new StarfieldPanel();
+        bg.setLayout(new GridBagLayout());
+        setContentPane(bg);
+
+        // ---- CARD ----
+        JPanel card = Theme.card();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBorder(BorderFactory.createEmptyBorder(40, 44, 40, 44));
+        card.setPreferredSize(new Dimension(360, 460));
+
+        // logo and title
+        JLabel icon  = Theme.label("◈", new Font("Serif", Font.BOLD, 42), Theme.PURPLE_2);
+        icon.setAlignmentX(CENTER_ALIGNMENT);
+
+        JLabel title = Theme.label("INVENTORY", Theme.FONT_TITLE, Theme.TEXT_WHITE);
+        title.setAlignmentX(CENTER_ALIGNMENT);
+
+        JLabel sub   = Theme.label("MANAGEMENT SYSTEM", Theme.FONT_LABEL, Theme.TEXT_MUTED);
+        sub.setAlignmentX(CENTER_ALIGNMENT);
+        sub.setBorder(BorderFactory.createEmptyBorder(0, 0, 28, 0));
+
+        // input fields
+        JLabel userLbl = Theme.label("USERNAME", Theme.FONT_LABEL, Theme.PURPLE_3);
+        JTextField userField = Theme.styledField(20);
+        userField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+
+        JLabel passLbl = Theme.label("PASSWORD", Theme.FONT_LABEL, Theme.PURPLE_3);
+        passLbl.setBorder(BorderFactory.createEmptyBorder(14, 0, 0, 0));
+        JPasswordField passField = Theme.styledPassword(20);
+        passField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+
+        // status message (shows errors)
+        JLabel statusLbl = Theme.label("", Theme.FONT_SMALL, Theme.DANGER);
+        statusLbl.setAlignmentX(CENTER_ALIGNMENT);
+        statusLbl.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+
+        // buttons
+        JButton loginBtn    = Theme.primaryButton("Sign In");
+        JButton registerBtn = Theme.primaryButton("Create Account");
+        loginBtn.setAlignmentX(CENTER_ALIGNMENT);
+        loginBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+        registerBtn.setAlignmentX(CENTER_ALIGNMENT);
+        registerBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+
+        JPanel btnRow = new JPanel(new GridLayout(1, 2, 10, 0));
+        btnRow.setOpaque(false);
+        btnRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+        btnRow.add(loginBtn);
+        btnRow.add(registerBtn);
+
+        // close button (since we removed the title bar)
+        JButton closeBtn = new JButton("✕");
+        closeBtn.setFont(Theme.FONT_SMALL);
+        closeBtn.setForeground(Theme.TEXT_MUTED);
+        closeBtn.setContentAreaFilled(false);
+        closeBtn.setBorderPainted(false);
+        closeBtn.setFocusPainted(false);
+        closeBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        closeBtn.addActionListener(e -> System.exit(0));
+
+        // add everything to card
+        card.add(icon);
+        card.add(title);
+        card.add(sub);
+        card.add(userLbl);
+        card.add(Box.createVerticalStrut(6));
+        card.add(userField);
+        card.add(passLbl);
+        card.add(Box.createVerticalStrut(6));
+        card.add(passField);
+        card.add(statusLbl);
+        card.add(Box.createVerticalStrut(18));
+        card.add(btnRow);
+
+        bg.add(card);
+
+        // allow dragging the window (since no title bar)
+        final int[] drag = {0, 0};
+        addMouseListener(new MouseAdapter() {
+            public void mousePressed(MouseEvent e) {
+                drag[0] = e.getX();
+                drag[1] = e.getY();
+            }
+        });
+        addMouseMotionListener(new MouseMotionAdapter() {
+            public void mouseDragged(MouseEvent e) {
+                setLocation(getX() + e.getX() - drag[0], getY() + e.getY() - drag[1]);
+            }
+        });
+
+        // ---- LOGIN ACTION ----
+        // this runs when you click Sign In or press Enter in password field
+        ActionListener loginAction = e -> {
+
+            String user = userField.getText().trim();
+            String pass = new String(passField.getPassword()).trim();
+
+            if (user.isEmpty() || pass.isEmpty()) {
+                statusLbl.setText("Please fill in all fields.");
+                return;
+            }
+
+            try {
+
+                Connection conn = DatabaseConnection.connect();
+
+                PreparedStatement pst = conn.prepareStatement(
+                    "SELECT role FROM users WHERE username=? AND password=?");
+                pst.setString(1, user);
+                pst.setString(2, pass);
+
+                ResultSet rs = pst.executeQuery();
+
+                if (rs.next()) {
+
+                    String role = rs.getString("role");
+                    dispose(); // close login window
+
+                    // ================= ADMIN =================
+                    if (role.equalsIgnoreCase("admin")) {
+                        new Admin(user).setVisible(true);
+
+                    // ================= STAFF =================
+                    } else {
+                        staff.openStaffDashboard();
+                    }
+
+                } else {
+                    statusLbl.setText("Invalid username or password.");
+                    passField.setText("");
+                }
+
+                conn.close();
+
+            } catch (Exception ex) {
+                statusLbl.setText("Database connection failed.");
+                ex.printStackTrace();
+            }
+        };
+
+        loginBtn.addActionListener(loginAction);
+        passField.addActionListener(loginAction); // press Enter works too
+
+        // open register dialog
+        registerBtn.addActionListener(e -> new RegisterDialog(this).setVisible(true));
+
+        setVisible(true);
+    }
+}
+
+// =====================================================
+//  Register Dialog
+//  Pops up when you click "Create Account" in LoginFrame
+// =====================================================
+class RegisterDialog extends JDialog {
+
+    RegisterDialog(JFrame parent) {
+
+        super(parent, "Register", true);
+        setSize(380, 400);
+        setLocationRelativeTo(parent);
+        setUndecorated(true);
+        setShape(new RoundRectangle2D.Double(0, 0, 380, 400, 20, 20));
+
+        StarfieldPanel bg = new StarfieldPanel();
+        bg.setLayout(new GridBagLayout());
+        setContentPane(bg);
+
+        JPanel card = Theme.card();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBorder(BorderFactory.createEmptyBorder(32, 36, 32, 36));
+        card.setPreferredSize(new Dimension(310, 330));
+
+        JLabel title = Theme.label("Create Account",
+            new Font("Serif", Font.BOLD, 22), Theme.TEXT_WHITE);
+        title.setAlignmentX(CENTER_ALIGNMENT);
+        title.setBorder(BorderFactory.createEmptyBorder(0, 0, 20, 0));
+
+        JLabel uLbl = Theme.label("USERNAME", Theme.FONT_LABEL, Theme.PURPLE_3);
+        JTextField uField = Theme.styledField(18);
+        uField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+
+        JLabel pLbl = Theme.label("PASSWORD", Theme.FONT_LABEL, Theme.PURPLE_3);
+        pLbl.setBorder(BorderFactory.createEmptyBorder(12, 0, 0, 0));
+        JPasswordField pField = Theme.styledPassword(18);
+        pField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+
+        JLabel rLbl = Theme.label("ROLE", Theme.FONT_LABEL, Theme.PURPLE_3);
+        rLbl.setBorder(BorderFactory.createEmptyBorder(12, 0, 0, 0));
+        JComboBox<String> roleBox = new JComboBox<>(new String[]{"staff", "admin"});
+        roleBox.setFont(Theme.FONT_BODY);
+        roleBox.setBackground(Theme.BG_CARD);
+        roleBox.setForeground(Theme.TEXT_WHITE);
+        roleBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+
+        JLabel statusLbl = Theme.label("", Theme.FONT_SMALL, Theme.DANGER);
+        statusLbl.setAlignmentX(CENTER_ALIGNMENT);
+        statusLbl.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+
+        JPanel btnRow = new JPanel(new GridLayout(1, 2, 10, 0));
+        btnRow.setOpaque(false);
+        btnRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+
+        JButton regBtn    = Theme.primaryButton("Register");
+        JButton cancelBtn = Theme.primaryButton("Cancel");
+        btnRow.add(regBtn);
+        btnRow.add(cancelBtn);
+
+        card.add(title);
+        card.add(uLbl);    card.add(Box.createVerticalStrut(5)); card.add(uField);
+        card.add(pLbl);    card.add(Box.createVerticalStrut(5)); card.add(pField);
+        card.add(rLbl);    card.add(Box.createVerticalStrut(5)); card.add(roleBox);
+        card.add(statusLbl);
+        card.add(Box.createVerticalStrut(16));
+        card.add(btnRow);
+
+        bg.add(card);
+
+        cancelBtn.addActionListener(e -> dispose());
+
+        regBtn.addActionListener(e -> {
+
+            String u = uField.getText().trim();
+            String p = new String(pField.getPassword()).trim();
+            String r = (String) roleBox.getSelectedItem();
+
+            if (u.isEmpty() || p.isEmpty()) {
+                statusLbl.setText("All fields required.");
+                return;
+            }
+
+            try {
+
+                Connection conn = DatabaseConnection.connect();
+
+                PreparedStatement pst = conn.prepareStatement(
+                    "INSERT INTO users(username,password,role) VALUES(?,?,?)");
+                pst.setString(1, u);
+                pst.setString(2, p);
+                pst.setString(3, r);
+                pst.executeUpdate();
+
+                conn.close();
+
+                Theme.showMessage(this, "Account registered successfully!", true);
+                dispose();
+
+            } catch (Exception ex) {
+                statusLbl.setText("Registration failed.");
+                ex.printStackTrace();
+            }
+        });
+    }
+}
